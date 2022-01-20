@@ -228,7 +228,10 @@ public class MqttxClient {
 
 
     /**
-     * 重新启动
+     * 重新启动.
+     * <p>
+     * 注意：重新启动会导致 {@link Session} 被更新, 可通过 {@link Session#isSessionValid()} 方法判断.
+     * </p>
      */
     public void restart() {
         if (serverProperties.needReconnect()) {
