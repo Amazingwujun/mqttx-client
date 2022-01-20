@@ -1,10 +1,5 @@
 package com.jun;
 
-import com.jun.entity.PubMsg;
-import com.jun.entity.TopicSub;
-import com.jun.handler.MqttMessageHandler;
-import com.jun.service.ISessionService;
-import com.jun.service.InMemorySessionServiceImpl;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
@@ -15,18 +10,55 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.mqtt.*;
-import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.util.AttributeKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
  * <h1>mqttx 客户端</h1>
+ * <p>使用方式:
+ * <pre>
+ *         // qos1 消息状态缓存服务
+ *         IQosService qosService = InMemoryQosServiceImpl.instance();
+ *
+ *         // conn 报文内容
+ *         Connect connect = new Connect("mqttx-client");
+ *         // 可以很复杂
+ *         // connect = new Connect("mqttx-client", "uname", "passwd".getBytes(), false, 60,
+ *         //        true, "nani".getBytes(), "willTopic", MqttQoS.AT_LEAST_ONCE, true);
+ *
+ *         // MqttMessageReceiver 用于处理客户端收到的消息
+ *         // AbstractMqttMessageReceiver: 实现了 MqttMessageReceiver, 提供：
+ *         // 1. 自动 connect
+ *         // 2. 短线重连
+ *         // 3. 心跳
+ *         // 等机制.
+ *         MqttMessageReceiver receiver = new OnlyPrintMqttMessageReceiver(qosService, connect);
+ *
+ *         // mqtt broker 配置
+ *         RemoteServerProperties remoteServerProperties = new RemoteServerProperties("192.168.32.35", 1883, Duration.ofSeconds(3), Duration.ofSeconds(5));
+ *
+ *         // 构建 mqtt client 并获取 session
+ *         Session session = new MqttxClient(receiver, InMemoryQosServiceImpl.instance(), remoteServerProperties)
+ *                 .start();
+ *         // 阻塞至收到 broker 对 conn 报文的回复( connAck )
+ *         try {
+ *             session.connectFuture.get();
+ *         } catch (InterruptedException | ExecutionException e) {
+ *             e.printStackTrace();
+ *         }
+ * </pre>
+ * 需要注意的点：
+ * <ol>
+ *     <li>当前版本不支持 qos2(会报错)</li>
+ *     <li>对 qos1 消息保存默认实现为: {@link InMemoryQosServiceImpl}，实现基于内存，应用重启或崩溃会导致消息丢失.</li>
+ *     <li>客户端支持断线重连, 重连配置见 {@link  RemoteServerProperties}</li>
+ * </ol>
  *
  * @author Jun
  * @since 1.0.0
@@ -45,23 +77,20 @@ public class MqttxClient {
         }
     }
 
-    private final ISessionService sessionService;
-    public final MqttProperties mqttProperties;
     public final RemoteServerProperties serverProperties;
+    private final MqttMessageReceiver messageReceiver;
+    private final IQosService sessionService;
     private Channel channel;
     private int messageIdGenerator = 0;
 
-    public MqttxClient(MqttProperties mqttProperties, RemoteServerProperties serverProperties) {
-        if (mqttProperties == null || serverProperties == null) {
-            throw new IllegalArgumentException("mqttProperties and ServerProperties 必须同时存在");
+    public MqttxClient(MqttMessageReceiver mqttMessageReceiver, IQosService sessionService, RemoteServerProperties serverProperties) {
+        if (mqttMessageReceiver == null) {
+            throw new IllegalArgumentException("mqttMessageReceiver 不能为空");
         }
 
-        this.mqttProperties = mqttProperties;
+        this.messageReceiver = mqttMessageReceiver;
         this.serverProperties = serverProperties;
-
-        // 将client注入到 MqttMessageReceiver
-        mqttProperties.mqttMessageReceiver.init(this);
-        this.sessionService = InMemorySessionServiceImpl.instance();
+        this.sessionService = sessionService;
     }
 
     /**
@@ -74,7 +103,7 @@ public class MqttxClient {
      * @return true if send
      */
     public boolean publish(String topic, byte[] payload, MqttQoS qoS, boolean retained) {
-        if (topic == null) {
+        if (ObjectUtils.isEmpty(topic)) {
             throw new IllegalArgumentException("topic 不能为空");
         }
         if (qoS == null || qoS == MqttQoS.EXACTLY_ONCE) {
@@ -94,7 +123,7 @@ public class MqttxClient {
                     .retained(retained)
                     .build();
         } else {
-            // 只可能是 AT_LEAST_ONCE(1),
+            // 只可能是 AT_LEAST_ONCE(1)
             final int messageId = nextMessageId();
             mpm = MqttMessageBuilders.publish()
                     .topicName(topic)
@@ -138,7 +167,6 @@ public class MqttxClient {
             return false;
         }
 
-
         // 构建订阅信息对象
         MqttMessageBuilders.SubscribeBuilder subscribeBuilder = MqttMessageBuilders.subscribe();
         topicSubs.forEach(topicSub -> subscribeBuilder.addSubscription(topicSub.qoS, topicSub.topic));
@@ -171,68 +199,33 @@ public class MqttxClient {
     }
 
     /**
-     * 异步启动客户端.
+     * 启动客户端.
      * </p>
      * 当 {@link  RemoteServerProperties#needReconnect()} 为 true 时且启动异常时，该方法会不断尝试重连.
+     *
+     * @return session，返回当前客户端关联的会话
      */
-    public void startWithAsync() {
+    public Session start() {
         if (channel != null && channel.isActive()) {
-            return;
+            return (Session) channel.attr(AttributeKey.valueOf(Session.ATTR_KEY)).get();
         }
         try {
-            start0(new ChannelInitializer<SocketChannel>() {
+            return start0(new ChannelInitializer<SocketChannel>() {
                 @Override
                 protected void initChannel(SocketChannel ch) {
                     ChannelPipeline p = ch.pipeline();
                     // todo ssl 支持
                     p
-                            .addLast(new IdleStateHandler(0, 0, (int) mqttProperties.heartbeatInterval.getSeconds()))
                             .addLast(MqttEncoder.INSTANCE)
                             .addLast(new MqttDecoder())
-                            .addLast(new MqttMessageHandler(mqttProperties, sessionService));
+                            .addLast(new MqttMessageHandler(messageReceiver));
                 }
             });
         } catch (Exception e) {
-            log.error("MqttxClient 启动失败", e);
-            restart();
+            throw new MqttxException("mqttx-client 启动异常: %s", e.getMessage());
         }
     }
 
-    /**
-     * 启动客户端，该方法阻塞至与服务端成功建立 tcp 连接.
-     */
-    public void startWithBlock() throws InterruptedException {
-        if (channel != null && channel.isActive()) {
-            return;
-        }
-        final CountDownLatch waiter = new CountDownLatch(1);
-        try {
-            start0(new ChannelInitializer<SocketChannel>() {
-                @Override
-                protected void initChannel(SocketChannel ch) {
-                    ChannelPipeline p = ch.pipeline();
-                    // todo ssl 支持
-                    p
-                            .addLast(new ChannelInboundHandlerAdapter() {
-
-                                @Override
-                                public void channelActive(ChannelHandlerContext ctx) throws Exception {
-                                    super.channelActive(ctx);
-                                    waiter.countDown();
-                                }
-                            })
-                            .addLast(new IdleStateHandler(0, 0, (int) mqttProperties.heartbeatInterval.getSeconds()))
-                            .addLast(MqttEncoder.INSTANCE)
-                            .addLast(new MqttDecoder())
-                            .addLast(new MqttMessageHandler(mqttProperties, sessionService));
-                }
-            });
-        } catch (Exception e) {
-            log.error("MqttxClient 启动失败", e);
-            restart();
-        }
-        waiter.await();
-    }
 
     /**
      * 重新启动
@@ -244,7 +237,7 @@ public class MqttxClient {
                     serverProperties.socketAddress.getPort());
 
             // 重新连接
-            schedule(this::startWithAsync, serverProperties.reconnectInterval.getSeconds());
+            schedule(this::start, serverProperties.reconnectInterval.getSeconds());
         }
     }
 
@@ -260,12 +253,19 @@ public class MqttxClient {
     }
 
     /**
+     * 返回客户端持有的 {@link Channel}
+     */
+    public Channel nettyChannel() {
+        return channel;
+    }
+
+    /**
      * 启动客户端，并给 channel 赋值
      *
      * @param channelInitializer 用于初始化 channel，主要是 {@link ChannelHandler}
      * @throws InterruptedException 见 {@link InterruptedException}
      */
-    private void start0(ChannelInitializer<SocketChannel> channelInitializer) throws InterruptedException {
+    private Session start0(ChannelInitializer<SocketChannel> channelInitializer) throws InterruptedException {
         Bootstrap b = new Bootstrap();
         b
                 .group(WORKER)
@@ -273,6 +273,11 @@ public class MqttxClient {
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) serverProperties.connectTimeout.toMillis())
                 .handler(channelInitializer);
         channel = b.connect(serverProperties.socketAddress).sync().channel();
+
+        // 构建 session
+        Session session = new Session(this);
+        channel.attr(AttributeKey.valueOf(Session.ATTR_KEY)).set(session);
+        return session;
     }
 
     /**

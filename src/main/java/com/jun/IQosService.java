@@ -1,17 +1,15 @@
-package com.jun.service;
-
-import com.jun.entity.PubMsg;
+package com.jun;
 
 import java.net.InetSocketAddress;
 import java.util.List;
 
 /**
- * 会话服务
+ * 提供消息状态保存、移除服务.
  *
  * @author Jun
  * @since 1.0.0
  */
-public interface ISessionService {
+public interface IQosService {
 
     /**
      * 通过 {@link InetSocketAddress} 找到与之关联待补发的消息

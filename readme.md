@@ -2,8 +2,8 @@
 
 ## 1 介绍
 
-`Mqttx` 基于 [MQTT v3.1.1](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html) 协议开发，实现基于 `netty`
-减少过度封装，提供较为便捷的 mqtt 客户端.
+`mqttx-client` 基于 [MQTT v3.1.1](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html) 协议开发， 减少过度封装，提供便捷使用的
+mqtt 客户端.
 
 依赖:
 
@@ -16,58 +16,38 @@
 1 连接建立
 
 ```
-        MqttMessageReceiver mmr = new AbstractMqttMessageReceiver() {
+    @Test
+    public void connectTest() {
+        // qos1 消息状态缓存服务
+        IQosService qosService = InMemoryQosServiceImpl.instance();
 
-            @Override
-            public void onPub(MqttPublishMessage msg) {
-                ByteBuf content = msg.payload();
-                // 将消息打印出来
-                System.out.println(content.toString(StandardCharsets.UTF_8));
-            }
+        // conn 报文内容
+        Connect connect = new Connect("mqttx-client");
+        // 可以很复杂
+        // connect = new Connect("mqttx-client", "uname", "passwd".getBytes(), false, 60,
+        //        true, "nani".getBytes(), "willTopic", MqttQoS.AT_LEAST_ONCE, true);
 
-            @Override
-            public void onSubAck(MqttSubAckMessage msg) {
-                // todo 订阅响应处理
-            }
+        // MqttMessageReceiver 用于处理客户端收到的消息
+        // AbstractMqttMessageReceiver: 实现了 MqttMessageReceiver, 提供：
+        // 1. 自动 connect
+        // 2. 短线重连
+        // 3. 心跳
+        // 等机制.
+        MqttMessageReceiver receiver = new OnlyPrintMqttMessageReceiver(qosService, connect);
 
-            @Override
-            public void onUnsubAck(MqttUnsubAckMessage msg) {
-                // todo 删除订阅响应处理
-            }
-
-            @Override
-            public void onConnSuccess(ChannelHandlerContext ctx) {
-                // todo mqtt conn 登入成功响应处理
-            }
-        };
-        
         // mqtt broker 配置
-        RemoteServerProperties remoteServerProperties = new RemoteServerProperties("", 1773, Duration.ofSeconds(3), Duration.ofSeconds(5));
-        
-        // mqtt 相关配置
-        MqttProperties properties = MqttProperties.builder()
-                .withClientId("mqttx-client")
-                .withUsername("username")
-                .withPassword("password")
-                .withCleanSession(true)
-                // 心跳间隔
-                .withHeartbeatInterval(Duration.ofMinutes(1))
-                .withMqttMessageReceiver(mmr)
-                .build();
-        
-        // 构建一个客户端实例
-        MqttxClient client = new MqttxClient(properties, removeServerProperties);
-        
-        // 启动方式有两种
-        // 异步
-        client.startWithAsync();
-        // 同步
+        RemoteServerProperties remoteServerProperties = new RemoteServerProperties("192.168.32.35", 1883, Duration.ofSeconds(3), Duration.ofSeconds(5));
+
+        // 构建 mqtt client 并获取 session
+        Session session = new MqttxClient(receiver, InMemoryQosServiceImpl.instance(), remoteServerProperties)
+                .start();
+        // 阻塞至收到 broker 对 conn 报文的回复( connAck )
         try {
-            // 阻塞至 tcp 连接建立成功
-            client.startWithBlock();
-        } catch (InterruptedException e) {
+            session.connectFuture.get();
+        } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
         }
+    }
 ```
 
 发送 `pub` 消息
@@ -89,38 +69,23 @@
 ## 2 目录结构
 
 ```
-\---java                                        
-    \---com                                     
-        \---jun                                 
-            |   AbstractMqttMessageReceiver.java
-            |   Immutable.java                  
-            |   MqttMessageReceiver.java        
-            |   MqttProperties.java             
-            |   MqttxClient.java
-            |   RemoteServerProperties.java
-            |
-            +---entity
-            |       PubMsg.java
-            |       TopicSub.java
-            |
-            +---handler
-            |       ConnAckHandler.java
-            |       IMqttHandler.java
-            |       MqttHandler.java
-            |       MqttMessageDelegatingHandler.java
-            |       MqttMessageHandler.java
-            |       PingAckHandler.java
-            |       PubAckHandler.java
-            |       PubCompHandler.java
-            |       PublishHandler.java
-            |       PubRecHandler.java
-            |       PubRelHandler.java
-            |       SubAckHandler.java
-            |       UnsubAckHandler.java
-            |
-            \---service
-                    InMemorySessionServiceImpl.java
-                    ISessionService.java
+\---java
+    \---com
+        \---jun
+                AbstractMqttMessageReceiver.java
+                Connect.java
+                Immutable.java
+                InMemoryQosServiceImpl.java
+                IQosService.java
+                MqttMessageHandler.java
+                MqttMessageReceiver.java
+                MqttxClient.java
+                MqttxException.java
+                ObjectUtils.java
+                PubMsg.java
+                RemoteServerProperties.java
+                Session.java
+                TopicSub.java
 ```
 
 ## 3 功能说明

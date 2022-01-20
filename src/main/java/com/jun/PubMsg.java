@@ -1,4 +1,4 @@
-package com.jun.entity;
+package com.jun;
 
 import io.netty.buffer.Unpooled;
 import io.netty.handler.codec.mqtt.*;
@@ -30,7 +30,7 @@ public class PubMsg {
     /**
      * 转为 {@link  MqttPublishMessage}
      */
-    public MqttPublishMessage toMqttPublishMessage(){
+    public MqttPublishMessage toMqttPublishMessage() {
         return (MqttPublishMessage) MqttMessageFactory.newMessage(
                 new MqttFixedHeader(MqttMessageType.PUBLISH, true, qoS, retained, 0),
                 new MqttPublishVariableHeader(topic, messageId),

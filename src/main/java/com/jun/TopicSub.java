@@ -1,6 +1,5 @@
-package com.jun.entity;
+package com.jun;
 
-import com.jun.Immutable;
 import io.netty.handler.codec.mqtt.MqttQoS;
 
 /**
@@ -16,7 +15,7 @@ public class TopicSub {
     public final MqttQoS qoS;
 
     public TopicSub(String topic, MqttQoS qoS) {
-        if (topic == null || topic.trim().equals("")) {
+        if (ObjectUtils.isEmpty(topic)) {
             throw new IllegalArgumentException("非法的 topic");
         }
         if (qoS == null || qoS == MqttQoS.EXACTLY_ONCE) {

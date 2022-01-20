@@ -1,11 +1,8 @@
-package com.jun.service;
+package com.jun;
 
-import com.jun.RemoteServerProperties;
-import com.jun.entity.PubMsg;
 import io.netty.handler.codec.mqtt.MqttQoS;
 
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.util.*;
 
 /**
@@ -14,16 +11,17 @@ import java.util.*;
  * @author Jun
  * @since 1.0.0
  */
-public class InMemorySessionServiceImpl implements ISessionService {
+public class InMemoryQosServiceImpl implements IQosService {
 
+    private static final IQosService instance = new InMemoryQosServiceImpl();
     private final Map<String, List<PubMsg>> cache = new HashMap<>();
-    private static final ISessionService instance = new InMemorySessionServiceImpl();
 
-    public static ISessionService instance() {
-        return instance;
+    private InMemoryQosServiceImpl() {
     }
 
-    private InMemorySessionServiceImpl(){}
+    public static IQosService instance() {
+        return instance;
+    }
 
     @Override
     public List<PubMsg> findByRemoteServerProperties(InetSocketAddress socketAddress) {

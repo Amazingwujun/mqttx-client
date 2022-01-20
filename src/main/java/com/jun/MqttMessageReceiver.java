@@ -1,14 +1,12 @@
 package com.jun;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.mqtt.MqttPublishMessage;
-import io.netty.handler.codec.mqtt.MqttSubAckMessage;
-import io.netty.handler.codec.mqtt.MqttUnsubAckMessage;
+import io.netty.handler.codec.mqtt.*;
 
 /**
  * mqtt 消息接收者，具体逻辑由用户实现。
  * <p>
- * 此接口的方法实现不应该存在阻塞等耗时的方法
+ * 此接口的方法实现不应该<strong>阻塞操作或耗时的方法</strong>
  * </p>
  *
  * @author Jun
@@ -17,43 +15,53 @@ import io.netty.handler.codec.mqtt.MqttUnsubAckMessage;
 public interface MqttMessageReceiver {
 
     /**
-     * 注入客户端.
-     * <p>
-     * 当 mqtt client 初始化时，将自身的引用注入到 mqttMessageReceiver. 见 {@link  MqttxClient#MqttxClient(MqttProperties, RemoteServerProperties)}
-     * 构造逻辑
-     * </p>
+     * 收到 conn 报文响应
      *
-     * @param client 客户端
+     * @param msg {@link  io.netty.handler.codec.mqtt.MqttMessage}
      */
-    void init(MqttxClient client);
-
-    /**
-     * 获得 receiver 对应的 {@link MqttxClient}
-     *
-     * @return mqtt 客户端
-     */
-    MqttxClient client();
+    void onConnAck(ChannelHandlerContext ctx, MqttMessage msg);
 
     /**
      * 收到 broker pub 类型消息
      *
      * @param msg {@link MqttPublishMessage}
      */
-    void onPub(MqttPublishMessage msg);
+    void onPub(ChannelHandlerContext ctx, MqttMessage msg);
+
+    /**
+     * 收到 {@link MqttMessageType#PUBACK}
+     *
+     * @param msg {@link MqttPubAckMessage}
+     */
+    void onPubAck(ChannelHandlerContext ctx, MqttMessage msg);
+
+    void onPubRec(ChannelHandlerContext ctx, MqttMessage msg);
+
+    void onPubRel(ChannelHandlerContext ctx, MqttMessage msg);
+
+    void onPubComp(ChannelHandlerContext ctx, MqttMessage msg);
 
     /**
      * 订阅响应
      *
      * @param msg {@link MqttSubAckMessage}
      */
-    void onSubAck(MqttSubAckMessage msg);
+    void onSubAck(ChannelHandlerContext ctx, MqttMessage msg);
 
     /**
      * 取消订阅响应
      *
      * @param msg {@link MqttUnsubAckMessage}
      */
-    void onUnsubAck(MqttUnsubAckMessage msg);
+    void onUnsubAck(ChannelHandlerContext ctx, MqttMessage msg);
+
+    /**
+     * 心跳响应包
+     *
+     * @param ctx {@link  ChannelHandlerContext}
+     * @param msg {@link }
+     */
+    void onPingResp(ChannelHandlerContext ctx, MqttMessage msg);
 
     /**
      * tcp 连接建立成功
@@ -68,11 +76,4 @@ public interface MqttMessageReceiver {
      * @param ctx {@link ChannelHandlerContext}
      */
     void onChannelInactive(ChannelHandlerContext ctx);
-
-    /**
-     * mqtt conn 成功
-     *
-     * @param ctx {@link ChannelHandlerContext}
-     */
-    void onConnSuccess(ChannelHandlerContext ctx);
 }
